@@ -71,7 +71,7 @@ sum(is.na(targets))
 There are no missing values in the data. Check the data types of variables:
 
 ```{r}
-# Output no included in final report as data types of 85 variables is too long
+# Output not included in final report as data types of 85 variables is too long
 #str(train)
 #str(test)
 ```
