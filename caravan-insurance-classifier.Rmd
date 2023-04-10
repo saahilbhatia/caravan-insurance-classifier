@@ -1,0 +1,604 @@
+---
+title: "Choosing and Explaining Likely Caravan Insurance Customers"
+output:
+  pdf_document:
+    number_sections: true
+    toc: yes
+    highlight: tango
+    keep_tex: true
+    includes:
+      in_header: styles.sty
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{=tex}
+\section*{Author information}
+\begin{center}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{L{2.5cm}|L{8.5cm}}
+ Family Name & BHATIA \\\hline 
+ Given Name & SAHIL \\\hline
+\end{tabular}
+\renewcommand{\arraystretch}{1}
+\end{center}
+```
+```{=tex}
+\newpage
+\section{Introduction}
+```
+The key objectives of the project were to predict the most prospective customers for a mobile home insurance policy and explaining why these customers are more likely to buy the insurance policy.
+
+The first task in the project was the prediction task. The objective of this task was to identify 800 customers out of 4000 customers in the test data set with the highest propensity to buy the caravan insurance. 3 Datasets were provided for the task: training dataset, test dataset and the targets dataset. Several classification models - logistic regression, Linear Discriminant Analysis, and Quadratic Disriminant Analysis, were fitted on the training set of the training dataset. The validation set of the training dataset was used to make predictions based on the curves fitted for the training set. The fitted models were compared against each other and the best model used to identify the 800 potential caravan insurance buyers in the test dataset.
+
+The second task in the project was to provide the justification for the prospective customers identified in the prediciton task. The key insights from the chosen classification model backed up with supporting analysis was provided to justify why the company should target the identified customers for their caravan insurance policy.
+
+```{=tex}
+\newpage
+\section{Data Loading and Exploration}
+```
+### Data Loading:
+
+Loading the required libraries:
+
+```{r}
+library(ggplot2) # for creating visualisations
+library(lattice) # for creating visualizations for EDA
+library(caret) # for computing the confusion matrix and related statistics
+library(MASS) # for fitting LDA, QDA
+library(boot) # for cross-validation
+library(data.table) # for changing column names of a df
+```
+
+Loading the training, testing and target dataset for the prediction task:
+
+```{r}
+train <- read.table("http://kdd.ics.uci.edu/databases/tic/ticdata2000.txt", sep = "\t")
+test <- read.table("http://kdd.ics.uci.edu/databases/tic/ticeval2000.txt", sep = "\t")
+targets <- read.table("http://kdd.ics.uci.edu/databases/tic/tictgts2000.txt", sep = "\t")
+```
+
+Let us check if there are any missing values in the datasets:
+
+```{r}
+sum(is.na(train))
+sum(is.na(test))
+sum(is.na(targets))
+```
+
+There are no missing values in the data. Check the data types of variables:
+
+```{r}
+# Output no included in final report as data types of 85 variables is too long
+#str(train)
+#str(test)
+```
+
+All the variables are read as integer. However, from the data dictionary provided, we know that the variables V1 and V5 are nominal categorical variables with several classes. We can alse see that variables V6 to V15 can be converted to factor variables; V6 to V15 are variables like Roman Catholic, Protestant, Religion, Not Married, Single, etc. For these variables, the values from 0 to 9 are not intuitive, and no labels are provided. For example, it is tough to say the difference between value of 3 for Roman Catholic and value of 4 for Roman Catholic. Converting the nominal categorical variables from integer to factor:
+
+```{r}
+#V1
+train$V1 <- as.factor(train$V1)
+test$V1 <- as.factor(test$V1)
+#V5
+train$V5 <- as.factor(train$V5)
+test$V5 <- as.factor(test$V5)
+# V6:V15
+train[,6:15] = lapply(train[,6:15], factor)
+test[,6:15] = lapply(test[,6:15], factor)
+```
+
+There are some ordinal categorical variables like V4 and V6 which are discretized into age buckets and percentage buckets respectively. We can leave the ordinal variables as is because there is meaning between the difference in values. For example, a value of 1 for V4 indicates low age while a value of 6 indicates higher age and a value somewhere in between indicates an age that is greater than age assocated with level 1 and less than age associated with level 6.
+
+### Exploratory Data Analysis
+
+Let's have a look at the distribution of the target variable V86 (Number of mobile home policies):
+
+```{r}
+hist(train$V86)
+```
+
+We can see that target variable takes values of 0 and 1. We can convert it into factor variable. Before we convert into factor variable, let us check the correlation matrix to identify some variable highly correlated with the target variable.
+
+```{r}
+# Correlation Analysis
+cor_table <- data.frame(cor(train[,-c(1,5, 6:15)]))
+cor_table <- cor_table[-nrow(cor_table),] #removing last row of V86
+summary(cor_table$V86)
+```
+
+We can see that the correlations with the target variable are quite low; the maximum correlation is 0.15.Let us explore a few variables with a relatively higher correlation with the target variable as it will be useful while doing the data modelling.
+
+```{r}
+cor_tab_sub = subset(cor_table, V86 > 0.075 | V86 < -0.075 , select = c(V86))
+cor_tab_sub
+```
+
+These are few variable with the magnitude of correlation coefficient greater than 0.075. Plotting a scatterplot matrix for these variables:
+
+```{r}
+sub_cols = row.names(cor_tab_sub)
+train_sub = train[,sub_cols]
+pairs(train_sub)
+```
+
+From the scatterplot matrix, we can see that the variables have been discretized, and it is tough to identify relationships and associations using the scatterplot matrix.
+
+Let us plot a levelplot of the correlation table for these variables:
+
+```{r}
+levelplot(cor(train_sub),scales = list(x = list(rot = 90)))
+```
+
+From the above levelplot, we can see that the correlation is higher among the variables upto V43, which are demographic variables. This makes sense because the demographic data is same for customers with the same postal code. Pairs V30 and V31, V42 and V43, V16 and V18 are highly correlated. The non-demographic variables have very weak correlations among them.
+
+Let us look at the distributions for these variables:
+
+```{r}
+# par(mfrow = c(3,5))
+for (i in 1:(length(train_sub))) {
+        boxplot(train_sub[,i], main = names(train_sub[i]), col = 'lightblue') 
+  }
+
+```
+
+Among the demographic variables, we can see a few data points that are outside the whiskers. Among the non-demographic variables, there are few points outside the whiskers in V61, V68 and V82. From the variable description, we can see that V68 and V82 are the number of car and boat policies respectively and V61 is the contribution to boat policies. There are a few customers with much higher number of car and policies; it looks like they could be good candidates for the caravan insurance policy.
+
+Converting target variable to a factor variable:
+
+```{r}
+train$V86 <- as.factor(train$V86)
+targets$V1 <- as.factor(targets$V1)
+
+summary(train$V86)
+```
+
+As we can see, there is a class imbalance with fewer people (\~6%) buying the car insurance. This metric will be useful while deciding the probability threshold in the logistic regression.
+
+```{=tex}
+\newpage
+\section{Model Fitting}
+```
+Given that the target variable is categorical, we will fit several classification models. As we are going to be fitting different classification models, we will be using a validation set approach to compare different models. We will split the training data into a training set and validation set. The models will be fit on the training data and compared using the test error for the validation set. Splitting training data into training set and validation set:
+
+```{r}
+# Splitting train into training set and validation set
+set.seed(10)
+training_set <- sample(dim(train)[1], 0.75 * dim(train)[1]) # 0.75 split
+```
+
+#### Logistic Regression Model
+
+First, we will develop a logistic regression model. Let us fit a logit model with all the predictors initially.
+
+```{r}
+# Using all predictors
+fit1 <- glm(V86 ~ ., data = train, family = binomial, subset = training_set)
+#summary(fit1)
+```
+
+The summary is not shown in the report as it is too long. After the inital model with all predictor, let us fit a model with significant predictors at 95% CI in model 1:
+
+```{r}
+fit2 <- glm(V86 ~ V47 + V55 + V59 + V76 + V82, data = train, family = binomial,
+            subset = training_set)
+summary(fit2)
+```
+
+From the above summary, we can see that V47, V59, and V82 are significant predictors. Note that V47 and V82 were also amongst the variables that had the highest correlation coefficient with the target variable. The residual deviance of the model is also much lower than the null deviance indicating that there is information gain using the predictors in the model.
+
+Let us try another model including variables that were significant at 90% CI in the first model (fit1):
+
+```{r}
+fit3 <- glm(V86 ~ V47 + V55 + V59 + V76 + V82 + V4 + V18 + V44 + V52, data = train,
+            family = binomial, subset = training_set)
+summary(fit3)
+```
+
+From the above summary, we can see that V47, V55, V59, V76, V82, V18 and V52 are significant predictors. The AIC of this model is less than that of model fit2. However, this model does have some insignificant predictors. Let us do an anova test for this model:
+
+```{r}
+anova(fit3, test = "Chisq")
+```
+
+From the anova test, we can see that V55 and V4 are not significant predictors. Let us try a model without these 2 variables:
+
+```{r}
+fit4 <- glm(V86 ~ V47 + V59 + V76 + V82 + V18 + V44 + V52, data = train, 
+            family = binomial, subset = training_set)
+summary(fit4)
+```
+
+The AIC of this model is almost equal to model fit3 and better than Model fit2. Model fit4 is more simpler than model fit3 and has 2 less variables. Hence, Model fit4 is preferable over model fit3 and is our best model so far.
+
+As we have 85 variables, we could have more significant predictors. Let us identify some more potential variables to include in the model. We had done the correlation analysis with the target variable earlier, we could use that to identify good predictors.
+
+```{r}
+# Set the correlation coefficient  threshold at modulus of 0.075
+subset(cor_table, V86 > 0.075 | V86 < -0.075   , select = c(V86))
+```
+
+Let us modify model fit4 by including new predictors from the above set of predictors. Note that most of the variables in model 4 feature in this list of variables that are highly correlated with the target variable.
+
+```{r}
+fit5 <- glm(V86 ~ V47 + V59 + V76 + V82 + V18 + V44 + V52 + V16 + 
+                  V30 + V31 + V34 + V37 + V42 + V43 + V47 + 
+                  V59 + V61 + V65 + V68, data = train, family = binomial, 
+            subset = training_set)
+summary(fit5)
+```
+
+The AIC of this model is slightly better than that of model fit4. The residual deviance is also lower than model fit4. However, there are at least 10 more variables in this model. There are also some irrelevant predictors. We can use stepwise regression to get rid off some irrelevant predictors.
+
+```{r}
+fit6 <- step(fit5, direction = "backward")
+summary(fit6)
+```
+
+The stepwise regression has helped us to get rid off several irrelevant predictors, and improved the AIC. This model is much more simpler and better than model fit5. It is tough to say that this model is better than Model fit4 because although this model has a lower AIC, it has 11 predictors while model fit4 has 7 predictors. We could use cross-validation to compare these two models and choose the champion model among these two models.
+
+Let us try some interaction variables. We can see from the different models that V47, V59 and V82 are the most significant predictors. From the data dictionary, V47 is contribution to car policies, V59 is the contribution to fire policies, and V82 is the number of boat policies. Let us create interaction variables mutliplying the contribution to car policy and the number of car policies. We can similarly do the same for fire and boat policies.
+
+```{r}
+fit4_inter_car <- update(fit4, . ~ . + V47 : V68 - V47) 
+summary(fit4_inter_car)
+```
+
+The model with the original variable (V47) is better than this model with the interaction variable; it has a lower AIC. Similar models were tried with fire and boat interaction variables and the models with original variables were better.
+
+We can also try the transformation of variables to increase the predictive power of the model. From the summary statistics, we know that most of the variables upto V64 (apart from the variables V1 and V5) have been discretized and we only have the levels, for example level 1 to level 10. Given that these variables have already been discretized, applying a log transformation or a polynomial transformation would not make sense. We could treat these ordinal variables as categorical and see if that makes a change to the predictive power. The variables from V65 onwards are the number of different policies purchased by the customer; we could leave these variables as numeric.
+
+Converting ordinal variables to categorical, and fitting a logistic model with important predictors identifed in earlier model fit4:
+
+```{r}
+# copying training data
+train_factor <- train
+# Converting ordinal variables to factor
+train_factor[1:64] <- lapply(train_factor[1:64], factor)
+# Fitting model with predictors used in fit 4
+fit4_factor <- glm(V86 ~ V47 + V59 + V76 + V82 + V18 + V44 + V52, data = train_factor, family = binomial, subset = training_set)
+summary(fit4_factor)
+```
+
+The AIC of this model is slightly lower than fit4. There is slight difference in the interpretation of the above model and the fit4 model which treats the ordinal variables as numeric. Let us take the example of the predictor V47: contribution car policies (V47). In fit4, for a unit (here level) increase in contribution car policies (V47) holding all the other predictors as fixed, the log odds ratio of a customer buying a caravan insurance policy increased by 0.21 units. In the above model, the log odds ratio of buying caravan insurance for level 6 contribution car policies is increased by 1.32 units with reference to level 0 contribution car policies (base case) fixing all other predictors.
+
+The major problem with proposing this model is that we need to ensure that all the levels of a predictor are included in the training model, else the model will not be able to predict the probability for an unseen level of the predictor in a new record. For example, V47 has levels from level 0 to level 8, if a record in the testing data set or an unseen data set has level 9, this model will throw an error as there is no coefficient for level 9 of V47. This is a major drawback of treating the variables as factor here, hence, I would propose a model that treats these ordinal variables as numeric. Note that treating these ordinal variables as numeric uses the assumption that the difference in levels in linear; the difference in levels 0 and 1 is the same as difference between levels 1 and 2.
+
+#### Cross-Validation for selecting the best model
+
+After fitting several logistic regression models, we now have 2 candidate models: fit4 and fit6. Let us use cross-validation to identify the better model among fit4 and fit6.
+
+```{r}
+#10-fold cross-validation
+set.seed(1)
+cv_fit4 = cv.glm(train[training_set,], fit4, K = 10)$delta[1]
+cv_fit6 = cv.glm(train[training_set,], fit6, K = 10)$delta[1]
+print(paste0("Cross-validated prediction error for fit4 is ", cv_fit4))
+print(paste0("Cross-validated prediction error for fit6 is ", cv_fit6))
+```
+
+As we can see, the cross-validated prediction error for fit4 and fit6 are similar, we can choose fit4 as the champion logistic regression model as it more simpler than fit6 with fewer predictors
+
+#### LDA
+
+Let us try a linear discriminant analysis, and see if we get better results than a logit model. Since both linear discriminant analysis and logit model fit linear decision boundaries, the LDA model should not be so different from the logistic model.
+
+Fitting a LDA with the variables used in the champion logit model (fit4):
+
+```{r}
+fit_lda = lda(V86 ~ V47 + V59 + V76 + V82 + V18 + V44 + V52,
+              data = train, subset = training_set)
+fit_lda
+```
+
+The prior probabilities represent the fraction of training set observations in each class of the response variable. Here, only 6% of training set observations belong to class 1; only 6% of customers in the training set bought the insurance policy. The Group means gives the estimates of the means for predictors within each class. We can see a huge difference in the means for V47. All the other predictors also have difference in the group means by class. The coefficient of linear discriminant can tell us how an increase or decrease in the predictor affects the response variable. For example, an increase in the level of contribution car policies (V47), indicates higher likelihood to buy the caravan insurance policy.
+
+#### QDA
+
+Let us try fitting a QDA model and see how it performs on the dataset. A QDA model is more flexible than LDA and logistic regression as it fits non-linear decision boundaries.
+
+Fitting a QDA model using the predictors in the logistic regression model:
+
+```{r}
+fit_qda = qda(V86 ~ V47 + V59 + V76 + V82 + V18 + V44 + V52, 
+              data = train, subset = training_set)
+fit_qda
+```
+
+The output is similar to LDA except that it does not contain the coefficients as QDA classifier is a quadratic function of the predictors.
+
+```{=tex}
+\newpage
+\section{Model Comparison}
+```
+Let us compare the 3 classifers that we used to classify the customers: Logistic regression, LDA and QDA. Logistic regression and LDA produce linear decision boundaries while QDA fits a non-linear decision boundary. Theoretically, the difference between LDA and logistic regression is that the coefficients in logistic regression are computed using maximum likelihood while the coefficients in a LDA model are computed using estimated group means and variances. LDA assumes that the observations within each class are drawn from a multivariate normal (Gaussian) distribution with different means for classes, but the variances are equal for all the classes. A LDA would be better than logit if these assumptions are valid. QDA relaxes the assumption of equal variances for each class, however it still assumes that the observations within each class are drawn from a Gaussian distribution.
+
+Let us test the normal distribution assumption of LDA and QDA. In a mutivariate normal distribution, every predictor is approximately of the form of a normal distribution. Let us test the normality assumption for some of the important predictors, starting with V47:
+
+```{r}
+# Histogram of V47 by V86 (response var)
+ggplot(train, aes(x= V47)) + 
+    geom_histogram(bins = 30) +
+    facet_grid(~V86) 
+```
+
+From the above plot, we can clearly see that the observations do not follow a normal distribution. The observations within class 1 are very few in number, and most of them are 6.
+
+Testing the normality assumption for V59:
+
+```{r}
+# Histogram of V59 by V86 (response var)
+ggplot(train, aes(x= V59)) + 
+    geom_histogram(bins = 30) +
+    facet_grid(~V86) 
+```
+
+Again, we can see that the records for V59 in each class do not follow a normal distribution. We can do similar plots for other predictors.
+
+Given that we have ordinal predictors and the size of class 1 for the response variable is really small, the assumption of a normal distribution of predictors within each class made by LDA and QDA seems far-fetched. Hence, Logistic regression should perform better than LDA and QDA for this data set.
+
+We are using a validation set approach here to select the best model. Let us do the predictions on the validation set for the 3 models.
+
+Prediction on validation set using the logistic regression model:
+
+```{r}
+V86_Prob_Logit <- predict(fit4, train[-training_set,], type = "response")
+summary(V86_Prob_Logit)
+```
+
+Given that we need to identify 800 customers out of 4000 customers that are most likely to buy the caravan insurance in the testing dataset. Let us follow the same approach here and compute the probability threshold to identify the top 20% potential caravan insurance buyers in the validation data set. Note that top 20% is equivalent to 80th quantile.
+
+```{r}
+quantile_80 <- quantile(V86_Prob_Logit, probs = 0.8)
+quantile_80
+```
+
+Converting predicted probabilties to buy / not buy class (0 and 1) as in the training and target datasets.
+
+```{r}
+V86_Pred_Logit <- as.factor(ifelse(V86_Prob_Logit >= quantile_80, 1, 0))
+summary(V86_Pred_Logit)
+```
+
+Computing the confusion matrix for the predicted values against the actual values in the validation set using the caret package.
+
+```{r}
+confusionMatrix(table(V86_Pred_Logit, train[-training_set,c("V86")]),
+                positive = "1") 
+```
+
+In this scenario, positive pred value is the most important statistic as positive predicted value is the fraction of predicted customers to buy the policy that actually bought the policy.
+
+Let us do the prediction on the validation set using LDA:
+
+```{r}
+lda_pred <- predict(fit_lda,train[-training_set,], type = "response")
+V86_Prob_LDA <- lda_pred$posterior[,2] # probability of class = 1
+quantile_80 <- quantile(V86_Prob_LDA, probs = 0.8)
+V86_Pred_LDA <- as.factor(ifelse(V86_Prob_LDA >= quantile_80, 1, 0))
+confusionMatrix(table(V86_Pred_LDA, train[-training_set,c("V86")]), positive = "1")
+```
+
+The positive predicted value for the LDA model is very similar to logistic regression model.
+
+Prediction on the validation set using the QDA model:
+
+```{r}
+qda_pred <- predict(fit_qda,train[-training_set,], type = "response")
+V86_Prob_QDA <- qda_pred$posterior[,2] # probability of class = 1
+quantile_80 <- quantile(V86_Prob_QDA, probs = 0.8)
+V86_Pred_QDA <- as.factor(ifelse(V86_Prob_QDA >= quantile_80, 1, 0))
+confusionMatrix(table(V86_Pred_QDA, train[-training_set,c("V86")]), positive = "1")
+```
+
+The positive predicted value here is also similar to that of the LDA model and logistic regression model.
+
+We can see that the positive predicted value is similar for the 3 models. Logistic regression can be more easily explained to the business users and one of the objective here is to justify the model to business users. Therefore, **I would propose a logistic regression model** for this scenario because of its better results and interpretability.
+
+```{=tex}
+\newpage
+\section{Prediction on testing data set}
+```
+We have selected the logistic regression model to predict whether customers would buy the caravan insurance policy. Let us fit the finalised logistic regression model using the entire training data set:
+
+```{r}
+logit <- glm(V86 ~ V47 + V59 + V76 + V82 + V18 + V44 + V52, 
+             data = train, family = binomial)
+```
+
+Predicting the 800 customers with the highest propensity to buy the caravan insurance policy:
+
+```{r}
+V86_Prob_Logit <- predict(logit, test, type = "response")
+quantile_80 <- quantile(V86_Prob_Logit, probs = 0.8)
+V86_Pred_Logit <- as.factor(ifelse(V86_Prob_Logit >= quantile_80, 1, 0))
+summary(V86_Pred_Logit)
+```
+
+Compute the accuracy of the logistic regression model using the testing data set:
+
+```{r}
+confusionMatrix(table(V86_Pred_Logit,targets$V1), positive = "1")
+```
+
+The positive predicted value for the logistic regression model on the testing dataset is 14.2%. In other words, 14.2% of customers, who are most likely to buy the mobile home insurance policy as per the logit model, actually bought the insurance policy. 14.2% is somewhat low, but is an improvement over a random guess which would have 6% accuracy as only 6% of customers bought the insurance policy. This model improves the accuracy by almost 2.5 times.
+
+```{=tex}
+\newpage
+\section{Variable Identification and Explanation}
+```
+#### Customer Attributes significantly impacting buying decision
+
+For finding the customer attributes that significantly influence the purchase of the policy, let us take a look at the summary of the logistic regression output:
+
+```{r}
+summary(logit)
+```
+
+From the above summary, we know the log odds ratio of buying the insurance policy increases or decreases based on the estimate of the predictor. For the number of boat policies (V82), the log odds ratio of buying the policy increases by 2 units for a unit increase in the number of boat policies purchased by the customer. The takeaway could be that a wealthy customer who has purchased a boat policy is more likely to buy the caravan insurance policy. Let us add the descriptions for these variables and print the summary of the logistic regression:
+
+```{r}
+predictor_names = c('Contribution_car_policies',
+                 'Contribution_fire_policies',
+                 'Number_of_life_insurances',
+                 'Number_of_boat_policies',
+                 'Lower_level_education',
+                 'Contribution_private_third_party_insurance',
+                 'Contribution_Tractor_Policies',
+                 'Mobile_Home_Policies')
+
+setnames(train, old = c('V47','V59', 'V76', 'V82', 
+                        'V18', 'V44', 'V52', 'V86'), 
+                new = predictor_names)
+```
+
+```{r}
+logit_with_desc <- glm(Mobile_Home_Policies ~ Contribution_car_policies +
+                 Contribution_fire_policies +
+                 Number_of_life_insurances +   
+                 Number_of_boat_policies +
+                 Lower_level_education +
+                 Contribution_private_third_party_insurance +
+                 Contribution_Tractor_Policies, 
+                 family = binomial, data = train)
+summary(logit_with_desc)
+```
+
+From the regression equation, we can clearly see that an increase in contribution to car policies, fire policies, private third party incurance and number of boat policies leads to higher likelihood of purchase of mobile home insurance. This makes sense as customers already buying policies for their assets are more likely to buy the mobile home policies. It can also be easily inferred that these customers are rich with them owning boats and cars. Lower level of education tends to decrease the likelihood of buying the policy; the explanation here could be that less educated people are less likely to be wealthy and also less likely to be aware of insurance policies for mobile homes. It is interesting that an increase in contribution to tractor policies decreases the probability of buying the caravan insurance policy at a significance level of 90%. A possible explanation here could be that the people buying tractor policies are mostly earning their livelihood from agriculture and are less likely to travel, especially investing in a caravan for their travels. Let us investigate the relationships between these predictors and response variables in detail.
+
+Contribution car policies vs. Number of mobile home policies:
+
+```{r}
+# code for the percentage plot based on Sebestian Sauer's blog # Reference [1] 
+ggplot(train, aes(x= Contribution_car_policies)) + 
+    geom_bar(aes(y = ..prop.., fill = factor(..x..)), stat="count") +
+    labs(y = "Percent", fill="") +
+    facet_grid(~Mobile_Home_Policies) + 
+    scale_y_continuous(labels = scales::percent)
+```
+
+From the above plot, we can clearly see that around four-fifth of the customers with a mobile home policy have a high level (5 or 6) contribution to car policies.
+
+Contribution_fire_policies vs. Number of mobile home policies:
+
+```{r}
+# code for the percentage plot based on Sebestian Sauer's blog # Reference [1] 
+ggplot(train, aes(x= Contribution_fire_policies)) + 
+    geom_bar(aes(y = ..prop.., fill = factor(..x..)), stat="count") +
+    labs(y = "Percent", fill="") +
+    facet_grid(~Mobile_Home_Policies) + 
+    scale_y_continuous(labels = scales::percent)
+```
+
+From the above plot, we can see that around half of the customers that bought a mobile home have level 4 or higher contribution to fire policies, while around half of the customers that did not buy a mobile home policy have level 0 contribution to fire policies. Computing the average level of contributon to fire policies by purchase of mobile home policies:
+
+```{r}
+aggregate(Contribution_fire_policies ~ Mobile_Home_Policies, 
+          data = train, FUN = mean)
+```
+
+Let us check if the means are statistically significant:
+
+```{r}
+# stat testing means of contribution_fire_policies
+ t.test(subset(train,Mobile_Home_Policies == "0",
+               select=c(Contribution_fire_policies)),
+        subset(train,Mobile_Home_Policies == "1",
+               select = c(Contribution_fire_policies)))
+```
+
+The p-value is very small and the t-statistic is large indicating a statistical difference between the means. We can conclude that the customers buying mobile home policies have a higher level of contribution to fire policies.
+
+Number_of_boat_policies vs. Number of mobile home policies:
+
+```{r}
+# stat testing means of number of boat policies
+t.test(subset(train,Mobile_Home_Policies == "0",
+              select =c(Number_of_boat_policies)),
+       subset(train,Mobile_Home_Policies == "1",
+              select = c(Number_of_boat_policies)))
+```
+
+The p-value is less than 0.05 here. The customers buying mobile home policies are likely to have a slightly higher number of boat policies
+
+Lower_level_education vs. Number of mobile home policies: From the regression equation and LDA equation, we can see that lower level of education had a negative coefficient indicating that an increase in level of lower_level_education results in decrease of likelihood to buy the mobile home insurance. However, from the group means in the LDA output we can see that mean of Lower_level_education is higher for customers buying mobile home policies. It looks like there is a confounding relationship here. A possible hypothesis is that people with lower level of education are likely to have lower income, and so they are less likely to buy the insurance policy. Let us check the correlation between lower_level_education variable with average income and purchasing power class:
+
+```{r}
+# correlation of lower_level_education and average income
+print(cor(train$Lower_level_education, train$V42))
+# corelation of lower_level_education and purchasing power class
+print(cor(train$Lower_level_education, train$V43))
+```
+
+We can see that the correlation coefficient is negative and has a magnitude of 0.4. An increase in lower level of education is associated with a decrease in income and purchasing power class. This shows that people with lower level of education have lower average income and purchasing power class. Let us stat test the means of average income and purchasing power class by mobile home policies:
+
+```{r}
+# stat testing means of average income
+t.test(subset(train,Mobile_Home_Policies == "0",select = c(V42)),
+       subset(train,Mobile_Home_Policies == "1",select = c(V42)))
+
+# stat testing means of purchasing power class
+t.test(subset(train,Mobile_Home_Policies == "0",select = c(V43)),
+       subset(train,Mobile_Home_Policies == "1",select = c(V43)))
+```
+
+We can see that people buying mobile home policies have higher income and purchasing power class on average.Overall, we can conclude that the level of education does not directly affect the possibility of customers buying mobile home insurance; however, people with very low level of education tend to have lower income and hence are less likely to buy mobile home insurance.
+
+Contribution_private_third_party_insurance vs. Number of Mobile Home Policies:
+
+```{r}
+# stat testing means of contribution to private party third insurance
+t.test(subset(train,Mobile_Home_Policies == "0",
+              select =c(Contribution_private_third_party_insurance)),
+       subset(train,Mobile_Home_Policies == "1",
+              select = c(Contribution_private_third_party_insurance)))
+```
+
+From the above test, we can conclude that the customers buying mobile home policies have a higher contribution to private third party insurance on average.
+
+Contribution_Tractor_Policies vs. Number of Mobile Home Policies:
+
+```{r}
+# stat testing means of contribution to private party third insurance
+t.test(subset(train,Mobile_Home_Policies == "0",
+              select = c(Contribution_Tractor_Policies )),
+       subset(train,Mobile_Home_Policies == "1",
+              select = c(Contribution_Tractor_Policies)))
+```
+
+There isn't a statistically significant difference between the means of response classes on contribution to tractor policies. We can still test our hypothesis about farmers less likely to buy the mobile home insurance with the "Farmer" variable (V21):
+
+Farmer vs. Number of Mobile Home Policies:
+
+```{r}
+# stat testing means of Farmer (V21)
+t.test(subset(train,Mobile_Home_Policies == "0",select = c(V21 )),
+       subset(train,Mobile_Home_Policies == "1",select = c(V21)))
+```
+
+Customers who did not buy the mobile home policy have a higher mean on the "Farmer" variable than customers who bought the mobile home policy with a statistically significant difference on the means. Farmers are less likely to buy the mobile home insurance policy.
+
+#### Recommendation
+
+The customer profile for the caravan insurance policy looks like wealthier people with a high number of policies, especially car and boat polices, and also a high contribution to policies. They also have a high contribution to third party insurance policies.
+
+The recommendation for the marketing team of the insurance company would be to increase their marketing effort for richer customers who are already buying insurance policies for their assets like cars, boats and are even insuring their assets from third party vendors. The marketing team can de-prioiritise their marketing effort for people with very low income and farmers.
+
+```{=tex}
+\newpage
+\section{Conclusion}
+```
+The customer dataset of the insurance company was initially explored and variables highly correlated with the response variable were identified. Afterwhich, several classification models were fit for the training set of the training data. The classifiers included logistic regression, linear discriminant analysis and quadratic discriminant analysis. A logical approach was followed for the variable selection, starting with all the predictors, then choosing significant predictors in the model with all predictors followed by statistical tests and backward stepwise regression for the subsequent model to get rid off irrelevant predictors. Transformation of variables and interaction between variables were also tried. Cross-validation was used to select the 2 best models from the hybrid variable subset selection approach. The 2 models had a similar cross-validated prediction error, so the simpler model with fewer variables was chosen as the champion model.
+
+The classification models fit on the training set were used to predict the probability of customers in the validation dataset to buy the caravan insurance policy. Using a suitable threshold of the predicted probability, the top 20% customers in the validation dataset with the highest propensity to buy the policy were identifed. The classification models were compared against each other on their testing accuracy, asssumptions made by the model for fitting the classifier, and interpretability of the model. Logistic regression model was found to perform better than linear discriminant analysis and quadratic discriminant analysis for this dataset. The logistic regression model had an accuracy of 14%; 14% of the 800 prospective customers identified from the model actually bought the policy. A random guess here would have an accuracy of 6%; the logistic model increased the accuracy by almost 2.5 times.
+
+The output of the logistic regression model was used to explain the customer profile of the prospective customers. The predictors in the logistic model were explored further and suitable visualisations were made to justify how the predictor influences the decision of customers to buy the policy. The task concluded with the key takeaways from the analysis and the recommendations for the marketing team of the insurace company.
+
+```{=tex}
+\newpage
+\section{References}
+```
+[1] Sebastian Sauer (2016). *How to plot a 'percentage plot' with ggplot2 - Way 5*. Retrieved from\
+<https://sebastiansauer.github.io/percentage_plot_ggplot2_V2/>
